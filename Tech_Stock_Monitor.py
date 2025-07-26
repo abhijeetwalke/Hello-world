@@ -84,7 +84,7 @@ def fetch_stock_data(symbol):
                 (daily_change / previous_close) * 100 if previous_close != 0 else 0
             )
 
-        # Get historical data for moving averages
+        # Get historical data for moving averages (get extra days to check for recent golden cross)
         hist_long = ticker.history(
             period="250d"
         )  # Get extra days to ensure we have enough data
@@ -98,6 +98,22 @@ def fetch_stock_data(symbol):
         ma_200d = None
         if len(hist_long) >= 200:
             ma_200d = hist_long["Close"].tail(200).mean()
+
+        # Check if Golden Cross occurred in the past 30 days
+        golden_cross = False
+        if len(hist_long) >= 200:
+            # Calculate 50-day and 200-day MAs for the past 60 days
+            # (we need 30 days + some buffer to detect the crossover)
+            ma_50d_series = hist_long["Close"].rolling(window=50).mean().tail(60)
+            ma_200d_series = hist_long["Close"].rolling(window=200).mean().tail(60)
+
+            # Check if there was a crossover in the past 30 days
+            # (50-day MA crossing above 200-day MA)
+            for i in range(1, min(31, len(ma_50d_series))):
+                if (ma_50d_series.iloc[-i] > ma_200d_series.iloc[-i] and
+                    ma_50d_series.iloc[-i-1] <= ma_200d_series.iloc[-i-1]):
+                    golden_cross = True
+                    break
 
         # Get P/E ratio (TTM)
         pe_ratio = info.get("trailingPE", "N/A")
@@ -117,6 +133,7 @@ def fetch_stock_data(symbol):
             "previous_close": previous_close,
             "ma_50d": ma_50d,  # 50-day moving average
             "ma_200d": ma_200d,  # 200-day moving average
+            "golden_cross": golden_cross,  # Golden Cross indicator
             "timestamp": datetime.now(),
         }
 
@@ -293,6 +310,10 @@ def create_summary_table(all_stock_data):
                 daily_change_display = f"{change_symbol}{percentage_change:.2f}%"
 
                 # Add to raw data for DataFrame
+                # Format Golden Cross indicator
+                golden_cross = stock_data["golden_cross"]
+                golden_cross_display = "✓" if golden_cross else "✗"
+
                 raw_data.append(
                     {
                         "Symbol": symbol,
@@ -303,6 +324,8 @@ def create_summary_table(all_stock_data):
                         "P/E (TTM) Display": pe_ratio_display,
                         "Daily Change": percentage_change,  # Store percentage change for sorting
                         "Daily Change Display": daily_change_display,  # Percentage only display
+                        "Golden Cross": golden_cross,  # Boolean for sorting
+                        "Golden Cross Display": golden_cross_display,  # Display value
                         "200-Day MA": ma_200d_raw,
                         "200-Day MA Display": ma_200d_display,
                         "50-Day MA": ma_50d_raw,
@@ -335,6 +358,7 @@ def create_summary_table(all_stock_data):
                 "Current Price": df_raw["Current Price Display"],
                 "P/E (TTM)": df_raw["P/E (TTM) Display"],
                 "Daily Change": df_raw["Daily Change Display"],
+                "Golden Cross": df_raw["Golden Cross Display"],
                 "200-Day MA": df_raw["200-Day MA Display"],
                 "50-Day MA": df_raw["50-Day MA Display"],
                 "Volume": df_raw["Volume Display"],
@@ -342,7 +366,7 @@ def create_summary_table(all_stock_data):
             }
         )
 
-        # Apply custom CSS to center-align table content
+        # Apply custom CSS to center-align table content and color daily changes
         st.markdown(
             """
         <style>
@@ -373,6 +397,23 @@ def create_summary_table(all_stock_data):
         div[data-testid="stDataFrameResizable"] [data-testid="stDataFrameResizable"] {
             justify-content: center !important;
         }
+
+        /* Color styling for positive/negative values */
+        .positive {
+            color: green !important;
+        }
+        .negative {
+            color: red !important;
+        }
+
+        /* Golden Cross styling */
+        .golden-cross-yes {
+            color: green !important;
+            font-weight: bold !important;
+        }
+        .golden-cross-no {
+            color: red !important;
+        }
         </style>
         """,
             unsafe_allow_html=True,
@@ -386,6 +427,7 @@ def create_summary_table(all_stock_data):
                 "Current Price": df_raw["Current Price"],
                 "P/E (TTM)": df_raw["P/E (TTM)"],
                 "Daily Change": df_raw["Daily Change"],  # Keep raw values for sorting
+                "Golden Cross": df_raw["Golden Cross"],  # Boolean for sorting
                 "200-Day MA": df_raw["200-Day MA"],
                 "50-Day MA": df_raw["50-Day MA"],
                 "Volume": df_raw["Volume"],
@@ -425,6 +467,10 @@ def create_summary_table(all_stock_data):
                 ),
                 "Volume": st.column_config.NumberColumn(
                     "Volume (M)", format="%.2f", help="Trading volume in millions"
+                ),
+                "Golden Cross": st.column_config.TextColumn(
+                    "Golden Cross",
+                    help="Golden Cross indicator (50-day MA > 200-day MA)",
                 ),
                 "Market Cap": st.column_config.NumberColumn(
                     "Market Cap (B)",
