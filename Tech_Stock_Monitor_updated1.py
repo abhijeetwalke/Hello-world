@@ -238,8 +238,7 @@ def create_summary_table(all_stock_data):
                     "Company": STOCKS[symbol],
                     "Current Price": f"${stock_data['current_price']:.2f}",
                     "P/E (TTM)": pe_ratio_value,
-                    "Daily Change": f"{stock_data['daily_change']:+.2f}",
-                    "Change %": f"{change_symbol}{percentage_change:.2f}%",
+                    "Daily Change": f"{stock_data['daily_change']:+.2f} ({change_symbol}{percentage_change:.2f}%)",
                     "200-Day MA": ma_200d_value,  # Swapped position with 50-Day MA
                     "50-Day MA": ma_50d_value,  # Swapped position with 200-Day MA
                     "Volume": format_volume(stock_data["volume"]),
@@ -289,7 +288,9 @@ def create_summary_table(all_stock_data):
                 percentage_change = stock_data["percentage_change"]
                 is_positive = percentage_change >= 0
                 change_symbol = "+" if is_positive else ""
-                percentage_display = f"{change_symbol}{percentage_change:.2f}%"
+
+                # Format percentage change only (no absolute value)
+                daily_change_display = f"{change_symbol}{percentage_change:.2f}%"
 
                 # Add to raw data for DataFrame
                 raw_data.append(
@@ -300,10 +301,8 @@ def create_summary_table(all_stock_data):
                         "Current Price Display": f"${stock_data['current_price']:.2f}",
                         "P/E (TTM)": pe_ratio_raw,
                         "P/E (TTM) Display": pe_ratio_display,
-                        "Daily Change": stock_data["daily_change"],
-                        "Daily Change Display": f"{stock_data['daily_change']:+.2f}",
-                        "Change %": percentage_change,
-                        "Change % Display": percentage_display,
+                        "Daily Change": percentage_change,  # Store percentage change for sorting
+                        "Daily Change Display": daily_change_display,  # Percentage only display
                         "200-Day MA": ma_200d_raw,
                         "200-Day MA Display": ma_200d_display,
                         "50-Day MA": ma_50d_raw,
@@ -336,7 +335,6 @@ def create_summary_table(all_stock_data):
                 "Current Price": df_raw["Current Price Display"],
                 "P/E (TTM)": df_raw["P/E (TTM) Display"],
                 "Daily Change": df_raw["Daily Change Display"],
-                "Change %": df_raw["Change % Display"],
                 "200-Day MA": df_raw["200-Day MA Display"],
                 "50-Day MA": df_raw["50-Day MA Display"],
                 "Volume": df_raw["Volume Display"],
@@ -380,20 +378,6 @@ def create_summary_table(all_stock_data):
             unsafe_allow_html=True,
         )
 
-        # Define display columns
-        display_columns = [
-            "Symbol",
-            "Company",
-            "Current Price",
-            "P/E (TTM)",
-            "Daily Change",
-            "Change %",
-            "200-Day MA",
-            "50-Day MA",
-            "Volume",
-            "Market Cap",
-        ]
-
         # Create a dataframe with the raw values for sorting but display values for showing
         display_df_final = pd.DataFrame(
             {
@@ -401,8 +385,7 @@ def create_summary_table(all_stock_data):
                 "Company": df_raw["Company"],
                 "Current Price": df_raw["Current Price"],
                 "P/E (TTM)": df_raw["P/E (TTM)"],
-                "Daily Change": df_raw["Daily Change"],
-                "Change %": df_raw["Change %"],
+                "Daily Change": df_raw["Daily Change"],  # Keep raw values for sorting
                 "200-Day MA": df_raw["200-Day MA"],
                 "50-Day MA": df_raw["50-Day MA"],
                 "Volume": df_raw["Volume"],
@@ -430,14 +413,9 @@ def create_summary_table(all_stock_data):
                     help="Price to Earnings ratio (trailing 12 months)",
                 ),
                 "Daily Change": st.column_config.NumberColumn(
-                    "Daily Change",
-                    format="%+.2f",
-                    help="Change in price from previous day",
-                ),
-                "Change %": st.column_config.NumberColumn(
-                    "Change %",
+                    "Daily Change %",
                     format="%+.2f%%",
-                    help="Percentage change from previous day",
+                    help="Percentage change in price from previous day",
                 ),
                 "200-Day MA": st.column_config.NumberColumn(
                     "200-Day MA", format="$%.2f", help="200-Day Moving Average"
