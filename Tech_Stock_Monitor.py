@@ -57,10 +57,9 @@ def fetch_stock_data(symbol):
     """
     try:
         ticker = yf.Ticker(symbol)
-
-        # Get current info
         info = ticker.info
 
+        # Get current info
         # Get historical data for the last 2 days to calculate daily change
         hist_recent = ticker.history(period="2d", interval="1d")
 
@@ -115,14 +114,25 @@ def fetch_stock_data(symbol):
                     golden_cross = True
                     break
 
-        # Get P/E ratio (TTM)
-        pe_ratio = info.get("trailingPE", "N/A")
+        # Get financial metrics
+        pe_ratio = info.get("trailingPE", info.get("forwardPE", "N/A"))
+        eps = info.get("trailingEPS", info.get("forwardEPS", info.get("epsTrailingTwelveMonths", "N/A")))
+        peg_ratio = info.get("pegRatio", info.get("fiveYearAvgDividendYield", "N/A"))
+        pb_ratio = info.get("priceToBook", "N/A")
+        short_percent_float = info.get("shortPercentOfFloat", "N/A")  # <-- Added
+
+        # Debug info - print what we're getting from Yahoo Finance
+        # print(f"Debug for {symbol}: EPS={eps}, PEG={peg_ratio}")
 
         # Compile stock data
         stock_data = {
             "symbol": symbol,
             "current_price": current_price,
             "pe_ratio": pe_ratio,  # P/E Ratio (TTM)
+            "eps": eps,  # Earnings Per Share (TTM)
+            "peg_ratio": peg_ratio,  # PEG Ratio
+            "pb_ratio": pb_ratio,  # P/B Ratio
+            "short_percent_float": short_percent_float,  # <-- Added
             "open_price": current_data["Open"],
             "high_price": current_data["High"],
             "low_price": current_data["Low"],
@@ -226,7 +236,6 @@ def display_stock_card(stock_data, company_name):
 def create_summary_table(all_stock_data):
     """Create a summary table of all tech stocks"""
     summary_data = []
-
     for symbol, stock_data in all_stock_data.items():
         if stock_data is not None:
             # Format P/E ratio
@@ -249,6 +258,12 @@ def create_summary_table(all_stock_data):
             is_positive = percentage_change >= 0
             change_symbol = "+" if is_positive else ""
 
+            short_percent_float_raw = stock_data.get("short_percent_float", "N/A")
+            if short_percent_float_raw == "N/A" or short_percent_float_raw is None:
+                short_percent_float_display = "N/A"
+            else:
+                short_percent_float_display = f"{short_percent_float_raw*100:.2f}%"
+
             summary_data.append(
                 {
                     "Symbol": symbol,
@@ -260,13 +275,11 @@ def create_summary_table(all_stock_data):
                     "50-Day MA": ma_50d_value,  # Swapped position with 200-Day MA
                     "Volume": format_volume(stock_data["volume"]),
                     "Market Cap": format_currency(stock_data["market_cap"]),
+                    "Short % Float": short_percent_float_display,  # <-- Added
                 }
             )
-
     if summary_data:
-        # Create a DataFrame with raw values for proper sorting
         raw_data = []
-
         for symbol, stock_data in all_stock_data.items():
             if stock_data is not None:
                 # Get raw numerical values for sorting
@@ -306,13 +319,40 @@ def create_summary_table(all_stock_data):
                 is_positive = percentage_change >= 0
                 change_symbol = "+" if is_positive else ""
 
-                # Format percentage change only (no absolute value)
-                daily_change_display = f"{change_symbol}{percentage_change:.2f}%"
-
                 # Add to raw data for DataFrame
                 # Format Golden Cross indicator
                 golden_cross = stock_data["golden_cross"]
                 golden_cross_display = "✓" if golden_cross else "✗"
+
+                # Format EPS, PEG ratio, and P/B ratio
+                eps_raw = stock_data["eps"]
+                if eps_raw == "N/A" or eps_raw is None:
+                    eps_raw = float("nan")
+                    eps_display = "N/A"
+                else:
+                    eps_display = f"{eps_raw:.2f}"
+
+                peg_ratio_raw = stock_data["peg_ratio"]
+                if peg_ratio_raw == "N/A" or peg_ratio_raw is None:
+                    peg_ratio_raw = float("nan")
+                    peg_ratio_display = "N/A"
+                else:
+                    peg_ratio_display = f"{peg_ratio_raw:.2f}"
+
+                pb_ratio_raw = stock_data["pb_ratio"]
+                if pb_ratio_raw == "N/A" or pb_ratio_raw is None:
+                    pb_ratio_raw = float("nan")
+                    pb_ratio_display = "N/A"
+                else:
+                    pb_ratio_display = f"{pb_ratio_raw:.2f}"
+
+                short_percent_float_raw = stock_data.get("short_percent_float", "N/A")
+                if short_percent_float_raw == "N/A" or short_percent_float_raw is None:
+                    short_percent_float_val = float("nan")
+                    short_percent_float_display = "N/A"
+                else:
+                    short_percent_float_val = short_percent_float_raw * 100
+                    short_percent_float_display = f"{short_percent_float_val:.2f}%"
 
                 raw_data.append(
                     {
@@ -322,14 +362,22 @@ def create_summary_table(all_stock_data):
                         "Current Price Display": f"${stock_data['current_price']:.2f}",
                         "P/E (TTM)": pe_ratio_raw,
                         "P/E (TTM) Display": pe_ratio_display,
+                        "EPS (TTM)": eps_raw,
+                        "EPS (TTM) Display": eps_display,
+                        "PEG Ratio": peg_ratio_raw,
+                        "PEG Ratio Display": peg_ratio_display,
+                        "P/B Ratio": pb_ratio_raw,
+                        "P/B Ratio Display": pb_ratio_display,
                         "Daily Change": percentage_change,  # Store percentage change for sorting
-                        "Daily Change Display": daily_change_display,  # Percentage only display
+                        "Daily Change Display": f"{change_symbol}{percentage_change:.2f}%",  # Percentage only display
                         "Golden Cross": golden_cross,  # Boolean for sorting
                         "Golden Cross Display": golden_cross_display,  # Display value
                         "200-Day MA": ma_200d_raw,
                         "200-Day MA Display": ma_200d_display,
                         "50-Day MA": ma_50d_raw,
                         "50-Day MA Display": ma_50d_display,
+                        "Short % Float": short_percent_float_val,  # For sorting
+                        "Short % Float Display": short_percent_float_display,
                         # Convert volume to millions for sorting and display
                         "Volume": (
                             stock_data["volume"] / 1e6
@@ -350,15 +398,24 @@ def create_summary_table(all_stock_data):
         # Create DataFrame with both raw and display values
         df_raw = pd.DataFrame(raw_data)
 
+        # Add a colored display for Golden Cross
+        df_raw["Golden Cross Colored"] = df_raw["Golden Cross"].apply(
+            lambda x: '<span style="color: green; font-weight: bold;">True</span>' if x else 'False'
+        )
+
         # Create a display DataFrame with only the columns we want to show
         display_df = pd.DataFrame(
             {
                 "Symbol": df_raw["Symbol"],
                 "Company": df_raw["Company"],
                 "Current Price": df_raw["Current Price Display"],
-                "P/E (TTM)": df_raw["P/E (TTM) Display"],
                 "Daily Change": df_raw["Daily Change Display"],
-                "Golden Cross": df_raw["Golden Cross Display"],
+                "P/E (TTM)": df_raw["P/E (TTM) Display"],
+                "EPS (TTM)": df_raw["EPS (TTM) Display"],
+                "PEG Ratio": df_raw["PEG Ratio Display"],
+                "P/B Ratio": df_raw["P/B Ratio Display"],
+                "Short % Float": df_raw["Short % Float Display"],
+                "Golden Cross": df_raw["Golden Cross Colored"],  # <-- Use colored HTML
                 "200-Day MA": df_raw["200-Day MA Display"],
                 "50-Day MA": df_raw["50-Day MA Display"],
                 "Volume": df_raw["Volume Display"],
@@ -366,129 +423,18 @@ def create_summary_table(all_stock_data):
             }
         )
 
-        # Apply custom CSS to center-align table content and color daily changes
-        st.markdown(
-            """
-        <style>
-        /* Center align the table headers and content */
-        div[data-testid="stDataFrameResizable"] table {
-            margin-left: auto !important;
-            margin-right: auto !important;
-            width: 100% !important;
-        }
-        div[data-testid="stDataFrameResizable"] th {
-            text-align: center !important;
-        }
-        div[data-testid="stDataFrameResizable"] td {
-            text-align: center !important;
-        }
-        div[data-testid="stDataFrameResizable"] [data-testid="column-header-content"] {
-            display: flex !important;
-            justify-content: center !important;
-        }
-        div[data-testid="stDataFrameResizable"] [data-testid="cell-content"] {
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
-        }
-        div[data-testid="stDataFrameResizable"] [data-testid="stHorizontalBlock"] {
-            justify-content: center !important;
-        }
-        div[data-testid="stDataFrameResizable"] [data-testid="stDataFrameResizable"] {
-            justify-content: center !important;
-        }
-
-        /* Color styling for positive/negative values */
-        .positive {
-            color: green !important;
-        }
-        .negative {
-            color: red !important;
-        }
-
-        /* Golden Cross styling */
-        .golden-cross-yes {
-            color: green !important;
-            font-weight: bold !important;
-        }
-        .golden-cross-no {
-            color: red !important;
-        }
-        </style>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        # Create a dataframe with the raw values for sorting but display values for showing
-        display_df_final = pd.DataFrame(
-            {
-                "Symbol": df_raw["Symbol"],
-                "Company": df_raw["Company"],
-                "Current Price": df_raw["Current Price"],
-                "P/E (TTM)": df_raw["P/E (TTM)"],
-                "Daily Change": df_raw["Daily Change"],  # Keep raw values for sorting
-                "Golden Cross": df_raw["Golden Cross"],  # Boolean for sorting
-                "200-Day MA": df_raw["200-Day MA"],
-                "50-Day MA": df_raw["50-Day MA"],
-                "Volume": df_raw["Volume"],
-                "Market Cap": df_raw["Market Cap"],
-            }
-        )
-
-        # Make the table as big as the screen allows and enable sorting
-        st.dataframe(
-            data=display_df_final,
-            column_config={
-                # Configure columns with appropriate types for sorting and center alignment
-                "Symbol": st.column_config.TextColumn(
-                    "Symbol", width="small", help="Stock ticker symbol"
-                ),
-                "Company": st.column_config.TextColumn(
-                    "Company", width="medium", help="Company name"
-                ),
-                "Current Price": st.column_config.NumberColumn(
-                    "Current Price", format="$%.2f", help="Current stock price"
-                ),
-                "P/E (TTM)": st.column_config.NumberColumn(
-                    "P/E (TTM)",
-                    format="%.2f",
-                    help="Price to Earnings ratio (trailing 12 months)",
-                ),
-                "Daily Change": st.column_config.NumberColumn(
-                    "Daily Change %",
-                    format="%+.2f%%",
-                    help="Percentage change in price from previous day",
-                ),
-                "200-Day MA": st.column_config.NumberColumn(
-                    "200-Day MA", format="$%.2f", help="200-Day Moving Average"
-                ),
-                "50-Day MA": st.column_config.NumberColumn(
-                    "50-Day MA", format="$%.2f", help="50-Day Moving Average"
-                ),
-                "Volume": st.column_config.NumberColumn(
-                    "Volume (M)", format="%.2f", help="Trading volume in millions"
-                ),
-                "Golden Cross": st.column_config.TextColumn(
-                    "Golden Cross",
-                    help="Golden Cross indicator (50-day MA > 200-day MA)",
-                ),
-                "Market Cap": st.column_config.NumberColumn(
-                    "Market Cap (B)",
-                    format="$%.2f",
-                    help="Market Capitalization in billions",
-                ),
-            },
-            use_container_width=True,
-            hide_index=True,
-            height=800,
-        )
+        # Show summary table with HTML coloring for Golden Cross
+        st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
     else:
         st.error("No stock data available to display in summary table")
 
 
 def main():
     """Main application function"""
-    st.title("📈 Tech Stock Monitor")
+    # Custom styled title - TSM in Arial 25px green and centered
+    st.markdown("""
+    <h1 style="text-align: center; font-family: Arial; font-size: 25px; color: green;">TSM</h1>
+    """, unsafe_allow_html=True)
     st.markdown("Real-time stock prices and trading metrics for leading tech companies")
 
     # Sidebar controls
@@ -518,7 +464,7 @@ def main():
     last_update.text(f"Last updated: {current_time}")
 
     # Create tabs for different views
-    tab1, tab2 = st.tabs(["📊 Summary Table", "📋 Detailed Cards"])
+    tab1, tab2, tab3 = st.tabs(["📊 Summary Table", "📋 Detailed Cards", "🔍 Golden Cross"])
 
     with tab1:
         st.subheader("Tech Stocks Summary")
@@ -528,6 +474,68 @@ def main():
         st.subheader("Detailed Stock Information")
         for symbol, company_name in STOCKS.items():
             display_stock_card(all_stock_data[symbol], company_name)
+
+    with tab3:
+        st.subheader("Golden Cross Stocks")
+        # Filter stocks with golden cross and remove any None values
+        golden_cross_stocks = {symbol: data for symbol, data in all_stock_data.items()
+                              if data is not None and data.get("golden_cross", False)}
+
+        if golden_cross_stocks:
+            st.success(f"Found {len(golden_cross_stocks)} stocks with a golden cross in the past 30 days")
+            create_summary_table(golden_cross_stocks)
+
+            # Add visualization of golden crosses
+            st.subheader("Golden Cross Visualizations")
+            st.write("The charts below show the 50-day and 200-day moving averages. A golden cross occurs when the 50-day MA (blue) crosses above the 200-day MA (red).")
+
+            # For each stock with a golden cross, create a chart
+            for symbol, stock_data in golden_cross_stocks.items():
+                # Fetch historical data for the past 250 days
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="250d")
+
+                # Skip if we don't have enough data
+                if hist.empty or len(hist) < 200:
+                    continue
+
+                # Only proceed if we have valid data
+                if not hist.empty and len(hist) >= 200:
+                    # Calculate moving averages
+                    hist['MA50'] = hist['Close'].rolling(window=50).mean()
+                    hist['MA200'] = hist['Close'].rolling(window=200).mean()
+
+                    # Create a chart
+                    st.subheader(f"{symbol} - {STOCKS[symbol]}")
+
+                    # Create a DataFrame for the chart
+                    chart_data = pd.DataFrame({
+                        'Date': hist.index,
+                        'Price': hist['Close'],
+                        '50-Day MA': hist['MA50'],
+                        '200-Day MA': hist['MA200']
+                    })
+
+                    # Find the crossover point(s)
+                    crossover_points = []
+                    for i in range(1, len(hist)):
+                        if (hist['MA50'].iloc[i] > hist['MA200'].iloc[i] and
+                            hist['MA50'].iloc[i-1] <= hist['MA200'].iloc[i-1]):
+                            crossover_points.append(i)
+
+                    # Create the chart
+                    chart = st.line_chart(
+                        chart_data.set_index('Date')[['Price', '50-Day MA', '200-Day MA']]
+                    )
+
+                    # Add annotation about the crossover
+                    if crossover_points:
+                        latest_crossover = crossover_points[-1]
+                        crossover_date = hist.index[latest_crossover].strftime('%Y-%m-%d')
+                        crossover_price = hist['Close'].iloc[latest_crossover]
+                        st.caption(f"⭐ Golden Cross occurred on {crossover_date} at price ${crossover_price:.2f}")
+        else:
+            st.warning("No stocks with a golden cross in the past 30 days were found")
 
     # Auto-refresh functionality
     if auto_refresh:
