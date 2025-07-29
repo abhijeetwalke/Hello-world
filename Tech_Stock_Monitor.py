@@ -22,11 +22,13 @@ STOCKS = {
     "ASML": "ASML Holding N.V.",
     "AVGO": "Broadcom Inc.",
     "BLK": "BlackRock Inc.",
+    "BKNG": "Booking Holdings Inc.",
     "BTC-USD": "Bitcoin USD",  # Using BTC-USD instead of BTC=F for better compatibility
     "CDNS": "Cadence Design Systems Inc.",
     "CRM": "Salesforce Inc.",
     "CRSP": "CRISPR Therapeutics AG",
     "CRWD": "CrowdStrike Holdings Inc.",
+    "EXPE": "Expedia Group Inc.",
     "GLD": "SPDR Gold Shares",
     "GOOGL": "Alphabet Inc. (Class A)",
     "INTU": "Intuit Inc.",
@@ -36,6 +38,7 @@ STOCKS = {
     "NFLX": "Netflix Inc.",
     "NTLA": "Intellia Therapeutics Inc.",
     "NVDA": "NVIDIA Corporation",
+    "PLTR": "Palantir Technologies Inc.",
     "QCOM": "Qualcomm Inc.",
     "QQQ": "Invesco QQQ Trust",
     "RIVN": "Rivian Automotive Inc.",
@@ -44,9 +47,12 @@ STOCKS = {
     "SNOW": "Snowflake Inc.",
     "SNPS": "Synopsys Inc.",
     "SPY": "SPDR S&P 500 ETF Trust",
+    "TGT": "Target Corporation",
     "TSLA": "Tesla Inc.",
     "TSM": "Taiwan Semiconductor Manufacturing Co. Ltd.",
+    "WMT": "Walmart Inc.",
     "^VIX": "CBOE Volatility Index",  # Using ^VIX for the volatility index
+    "COST": "Costco Wholesale Corporation",
 }
 
 
@@ -98,20 +104,34 @@ def fetch_stock_data(symbol):
         if len(hist_long) >= 200:
             ma_200d = hist_long["Close"].tail(200).mean()
 
-        # Check if Golden Cross occurred in the past 30 days
+        # Check if Golden Cross or Death Cross occurred in the past 30 days
         golden_cross = False
+        death_cross = False
+        golden_cross_days_ago = None
+        death_cross_days_ago = None
+
         if len(hist_long) >= 200:
             # Calculate 50-day and 200-day MAs for the past 60 days
             # (we need 30 days + some buffer to detect the crossover)
             ma_50d_series = hist_long["Close"].rolling(window=50).mean().tail(60)
             ma_200d_series = hist_long["Close"].rolling(window=200).mean().tail(60)
 
-            # Check if there was a crossover in the past 30 days
+            # Check if there was a golden crossover in the past 30 days
             # (50-day MA crossing above 200-day MA)
             for i in range(1, min(31, len(ma_50d_series))):
                 if (ma_50d_series.iloc[-i] > ma_200d_series.iloc[-i] and
                     ma_50d_series.iloc[-i-1] <= ma_200d_series.iloc[-i-1]):
                     golden_cross = True
+                    golden_cross_days_ago = i
+                    break
+
+            # Check if there was a death crossover in the past 30 days
+            # (50-day MA crossing below 200-day MA)
+            for i in range(1, min(31, len(ma_50d_series))):
+                if (ma_50d_series.iloc[-i] < ma_200d_series.iloc[-i] and
+                    ma_50d_series.iloc[-i-1] >= ma_200d_series.iloc[-i-1]):
+                    death_cross = True
+                    death_cross_days_ago = i
                     break
 
         # Get financial metrics
@@ -144,6 +164,9 @@ def fetch_stock_data(symbol):
             "ma_50d": ma_50d,  # 50-day moving average
             "ma_200d": ma_200d,  # 200-day moving average
             "golden_cross": golden_cross,  # Golden Cross indicator
+            "golden_cross_days_ago": golden_cross_days_ago,  # Days since Golden Cross
+            "death_cross": death_cross,    # Death Cross indicator
+            "death_cross_days_ago": death_cross_days_ago,  # Days since Death Cross
             "timestamp": datetime.now(),
         }
 
@@ -320,9 +343,20 @@ def create_summary_table(all_stock_data):
                 change_symbol = "+" if is_positive else ""
 
                 # Add to raw data for DataFrame
-                # Format Golden Cross indicator
+                # Format Golden Cross and Death Cross indicators with days ago
                 golden_cross = stock_data["golden_cross"]
-                golden_cross_display = "✓" if golden_cross else "✗"
+                golden_cross_days_ago = stock_data.get("golden_cross_days_ago")
+                if golden_cross and golden_cross_days_ago is not None:
+                    golden_cross_display = f"✓ ({golden_cross_days_ago}d ago)"
+                else:
+                    golden_cross_display = "✗"
+
+                death_cross = stock_data["death_cross"]
+                death_cross_days_ago = stock_data.get("death_cross_days_ago")
+                if death_cross and death_cross_days_ago is not None:
+                    death_cross_display = f"✓ ({death_cross_days_ago}d ago)"
+                else:
+                    death_cross_display = "✗"
 
                 # Format EPS, PEG ratio, and P/B ratio
                 eps_raw = stock_data["eps"]
@@ -372,6 +406,8 @@ def create_summary_table(all_stock_data):
                         "Daily Change Display": f"{change_symbol}{percentage_change:.2f}%",  # Percentage only display
                         "Golden Cross": golden_cross,  # Boolean for sorting
                         "Golden Cross Display": golden_cross_display,  # Display value
+                        "Death Cross": death_cross,  # Boolean for sorting
+                        "Death Cross Display": death_cross_display,  # Display value
                         "200-Day MA": ma_200d_raw,
                         "200-Day MA Display": ma_200d_display,
                         "50-Day MA": ma_50d_raw,
@@ -398,10 +434,30 @@ def create_summary_table(all_stock_data):
         # Create DataFrame with both raw and display values
         df_raw = pd.DataFrame(raw_data)
 
-        # Add a colored display for Golden Cross with symbols
-        df_raw["Golden Cross Colored"] = df_raw["Golden Cross"].apply(
-            lambda x: '<span style="color: green; font-weight: bold;">✓</span>' if x else '<span style="color: red; font-weight: bold;">✗</span>'
-        )
+        # Add a colored display for Golden Cross and Death Cross with symbols and days ago
+        def format_golden_cross(row):
+            if row["Golden Cross"]:
+                days_ago = row.get("Golden Cross Days Ago")
+                if days_ago is not None:
+                    return f'<span style="color: green; font-weight: bold;">✓ ({days_ago}d ago)</span>'
+                return '<span style="color: green; font-weight: bold;">✓</span>'
+            return '<span style="color: red; font-weight: bold;">✗</span>'
+
+        def format_death_cross(row):
+            if row["Death Cross"]:
+                days_ago = row.get("Death Cross Days Ago")
+                if days_ago is not None:
+                    return f'<span style="color: red; font-weight: bold;">✓ ({days_ago}d ago)</span>'
+                return '<span style="color: red; font-weight: bold;">✓</span>'
+            return '<span style="color: green; font-weight: bold;">✗</span>'
+
+        # Add days ago to the DataFrame
+        df_raw["Golden Cross Days Ago"] = [data.get("golden_cross_days_ago") for data in all_stock_data.values() if data is not None]
+        df_raw["Death Cross Days Ago"] = [data.get("death_cross_days_ago") for data in all_stock_data.values() if data is not None]
+
+        # Apply formatting
+        df_raw["Golden Cross Colored"] = df_raw.apply(format_golden_cross, axis=1)
+        df_raw["Death Cross Colored"] = df_raw.apply(format_death_cross, axis=1)
 
         # Create a display DataFrame with clickable symbols and other columns
         display_df = pd.DataFrame(
@@ -416,6 +472,7 @@ def create_summary_table(all_stock_data):
                 "P/B Ratio": df_raw["P/B Ratio Display"],
                 "Short % Float": df_raw["Short % Float Display"],
                 "Golden Cross": df_raw["Golden Cross Colored"],  # <-- Use colored HTML
+                "Death Cross": df_raw["Death Cross Colored"],    # <-- Use colored HTML
                 "200-Day MA": df_raw["200-Day MA Display"],
                 "50-Day MA": df_raw["50-Day MA Display"],
                 "Volume": df_raw["Volume Display"],
@@ -473,7 +530,7 @@ def main():
     last_update.text(f"Last updated: {current_time}")
 
     # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["📊 Summary Table", "📋 Detailed Cards", "🔍 Golden Cross"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Summary Table", "📋 Detailed Cards", "🔍 Golden Cross", "⚠️ Death Cross"])
 
     # If a stock is selected for viewing, show its details
     if st.session_state.viewing_stock:
@@ -587,7 +644,7 @@ def main():
                     "Company": STOCKS[symbol],
                     "Current Price": f"${data['current_price']:.2f}",
                     "Daily Change": formatted_change,
-                    "Golden Cross": '<span style="color: green; font-weight: bold;">✓</span>'
+                    "Golden Cross": f'<span style="color: green; font-weight: bold;">✓ ({data.get("golden_cross_days_ago", "")}d ago)</span>'
                 })
 
             golden_cross_df = pd.DataFrame(golden_cross_data)
@@ -647,6 +704,93 @@ def main():
             st.write("The charts above show stocks that have experienced a golden cross in the past 30 days.")
         else:
             st.warning("No stocks with a golden cross in the past 30 days were found")
+
+    with tab4:
+        st.subheader("Death Cross Stocks")
+        # Filter stocks with death cross and remove any None values
+        death_cross_stocks = {symbol: data for symbol, data in all_stock_data.items()
+                             if data is not None and data.get("death_cross", False)}
+
+        if death_cross_stocks:
+            st.warning(f"Found {len(death_cross_stocks)} stocks with a death cross in the past 30 days")
+
+            # Create a table with stock information - using markdown to avoid st.table's non-interactive nature
+            st.markdown("### Death Cross Stocks")
+
+            # Create a DataFrame for display with clickable symbols
+            death_cross_data = []
+            for symbol, data in death_cross_stocks.items():
+                # Format daily change with color
+                daily_change = data['percentage_change']
+                change_color = "green" if daily_change >= 0 else "red"
+                change_symbol = "+" if daily_change >= 0 else ""
+                formatted_change = f'<span style="color: {change_color};">{change_symbol}{daily_change:.2f}%</span>'
+
+                death_cross_data.append({
+                    "Symbol": f'<a href="#" onclick="parent.postMessage({{cmd: \'streamlit:setComponentValue\', componentValue: \'{symbol}\', componentKey: \'stock_click\'}}, \'*\'); return false;" style="text-decoration: none; color: #1E88E5; font-weight: bold;">{symbol}</a>',
+                    "Company": STOCKS[symbol],
+                    "Current Price": f"${data['current_price']:.2f}",
+                    "Daily Change": formatted_change,
+                    "Death Cross": f'<span style="color: red; font-weight: bold;">✓ ({data.get("death_cross_days_ago", "")}d ago)</span>'
+                })
+
+            death_cross_df = pd.DataFrame(death_cross_data)
+
+            # Display the table with clickable symbols
+            st.markdown(death_cross_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+            # Display charts for all death cross stocks
+            st.markdown("### Death Cross Charts")
+
+            # Show charts for each stock with death cross
+            for symbol, stock_data in death_cross_stocks.items():
+                st.subheader(f"📊 {symbol} - {STOCKS[symbol]}")
+
+                # Fetch historical data for the past 250 days
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="250d")
+
+                if not hist.empty and len(hist) >= 200:
+                    # Calculate moving averages
+                    hist['MA50'] = hist['Close'].rolling(window=50).mean()
+                    hist['MA200'] = hist['Close'].rolling(window=200).mean()
+
+                    # Create a DataFrame for the chart
+                    chart_data = pd.DataFrame({
+                        'Date': hist.index,
+                        'Price': hist['Close'],
+                        '50-Day MA': hist['MA50'],
+                        '200-Day MA': hist['MA200']
+                    })
+
+                    # Find the crossover point(s)
+                    crossover_points = []
+                    for i in range(1, len(hist)):
+                        if (hist['MA50'].iloc[i] < hist['MA200'].iloc[i] and
+                            hist['MA50'].iloc[i-1] >= hist['MA200'].iloc[i-1]):
+                            crossover_points.append(i)
+
+                    # Create the chart
+                    chart = st.line_chart(
+                        chart_data.set_index('Date')[['Price', '50-Day MA', '200-Day MA']]
+                    )
+
+                    # Add annotation about the crossover
+                    if crossover_points:
+                        latest_crossover = crossover_points[-1]
+                        crossover_date = hist.index[latest_crossover].strftime('%Y-%m-%d')
+                        crossover_price = hist['Close'].iloc[latest_crossover]
+                        st.caption(f"⚠️ Death Cross occurred on {crossover_date} at price ${crossover_price:.2f}")
+
+                st.markdown("---")  # Add a separator between charts
+
+            # Add explanation
+            st.markdown("### About Death Cross")
+            st.write("A death cross occurs when the 50-day moving average crosses below the 200-day moving average. "
+                     "This is often considered a bearish signal by technical analysts.")
+            st.write("The charts above show stocks that have experienced a death cross in the past 30 days.")
+        else:
+            st.info("No stocks with a death cross in the past 30 days were found")
 
     # Auto-refresh functionality
     if auto_refresh:
