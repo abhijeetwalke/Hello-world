@@ -398,15 +398,15 @@ def create_summary_table(all_stock_data):
         # Create DataFrame with both raw and display values
         df_raw = pd.DataFrame(raw_data)
 
-        # Add a colored display for Golden Cross
+        # Add a colored display for Golden Cross with symbols
         df_raw["Golden Cross Colored"] = df_raw["Golden Cross"].apply(
-            lambda x: '<span style="color: green; font-weight: bold;">True</span>' if x else 'False'
+            lambda x: '<span style="color: green; font-weight: bold;">✓</span>' if x else '<span style="color: red; font-weight: bold;">✗</span>'
         )
 
-        # Create a display DataFrame with only the columns we want to show
+        # Create a display DataFrame with clickable symbols and other columns
         display_df = pd.DataFrame(
             {
-                "Symbol": df_raw["Symbol"],
+                "Symbol": [f'<a href="#" onclick="parent.postMessage({{cmd: \'streamlit:setComponentValue\', componentValue: \'{symbol}\', componentKey: \'stock_click\'}}, \'*\'); return false;" style="text-decoration: none; color: #1E88E5; font-weight: bold;">{symbol}</a>' for symbol in df_raw["Symbol"]],
                 "Company": df_raw["Company"],
                 "Current Price": df_raw["Current Price Display"],
                 "Daily Change": df_raw["Daily Change Display"],
@@ -431,11 +431,20 @@ def create_summary_table(all_stock_data):
 
 def main():
     """Main application function"""
-    # Custom styled title - TSM in Arial 25px green and centered
+    # Initialize session state for navigation
+    if 'viewing_stock' not in st.session_state:
+        st.session_state.viewing_stock = None
+
+    if 'selected_tab' not in st.session_state:
+        st.session_state.selected_tab = 0
+
+    # Custom styled title - SparkVibe with trumpet logo
     st.markdown("""
-    <h1 style="text-align: center; font-family: Arial; font-size: 25px; color: green;">TSM</h1>
+    <h1 style="text-align: center; font-family: 'Times New Roman', serif; font-size: 32px; color: #1E3A8A; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);">
+        🎺 SparkVibe <span style="font-size: 24px; color: #4B5563;">Finance</span>
+    </h1>
     """, unsafe_allow_html=True)
-    st.markdown("Real-time stock prices and trading metrics for leading tech companies")
+    st.markdown("<p style='text-align: center; font-style: italic; color: #4B5563;'>Real-time stock prices and trading metrics for leading tech companies</p>", unsafe_allow_html=True)
 
     # Sidebar controls
     st.sidebar.title("Controls")
@@ -466,14 +475,91 @@ def main():
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["📊 Summary Table", "📋 Detailed Cards", "🔍 Golden Cross"])
 
+    # If a stock is selected for viewing, show its details
+    if st.session_state.viewing_stock:
+        selected_symbol = st.session_state.viewing_stock
+        if selected_symbol in all_stock_data and all_stock_data[selected_symbol] is not None:
+            st.subheader(f"Detailed View: {selected_symbol} - {STOCKS[selected_symbol]}")
+            display_stock_card(all_stock_data[selected_symbol], STOCKS[selected_symbol])
+
+            # Get historical data for chart
+            ticker = yf.Ticker(selected_symbol)
+            hist = ticker.history(period="250d")
+
+            if not hist.empty and len(hist) >= 50:
+                # Calculate moving averages
+                hist['MA50'] = hist['Close'].rolling(window=50).mean()
+                hist['MA200'] = hist['Close'].rolling(window=200).mean()
+
+                # Create chart
+                st.subheader(f"Price History and Moving Averages")
+                chart_data = pd.DataFrame({
+                    'Date': hist.index,
+                    'Price': hist['Close'],
+                    '50-Day MA': hist['MA50'],
+                    '200-Day MA': hist['MA200']
+                })
+
+                st.line_chart(chart_data.set_index('Date')[['Price', '50-Day MA', '200-Day MA']])
+
+            # Add a button to go back to the main view
+            if st.button("← Back to Summary"):
+                st.session_state.viewing_stock = None
+                st.rerun()
+
+            # Early return to not show the tabs
+            return
+
+    # Add a component to capture clicks on stock symbols
+    stock_click = st.text_input("stock_click", "", key="stock_click", label_visibility="collapsed")
+    if stock_click and stock_click in STOCKS:
+        st.session_state.viewing_stock = stock_click
+        st.rerun()
+
+    # Add JavaScript to handle clicks on stock symbols
+    st.markdown("""
+    <script>
+    // Function to handle clicks on stock symbols
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add click event listeners to all stock symbol links
+        document.querySelectorAll('a.stock-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const symbol = this.getAttribute('data-symbol');
+                window.parent.postMessage({
+                    cmd: 'streamlit:setComponentValue',
+                    componentValue: symbol,
+                    componentKey: 'stock_click'
+                }, '*');
+            });
+        });
+    });
+    </script>
+    """, unsafe_allow_html=True)
+
     with tab1:
         st.subheader("Tech Stocks Summary")
         create_summary_table(all_stock_data)
 
     with tab2:
         st.subheader("Detailed Stock Information")
+
+        # Add a selectbox to jump to a specific stock
+        selected_stock = st.selectbox(
+            "Jump to stock:",
+            options=list(STOCKS.keys()),
+            format_func=lambda x: f"{x} - {STOCKS[x]}"
+        )
+
+        if selected_stock:
+            st.markdown(f"### {selected_stock} - {STOCKS[selected_stock]}")
+            display_stock_card(all_stock_data[selected_stock], STOCKS[selected_stock])
+            st.markdown("---")
+
+        # Display all other stocks
         for symbol, company_name in STOCKS.items():
-            display_stock_card(all_stock_data[symbol], company_name)
+            if symbol != selected_stock:  # Skip the already displayed selected stock
+                display_stock_card(all_stock_data[symbol], company_name)
 
     with tab3:
         st.subheader("Golden Cross Stocks")
@@ -483,30 +569,47 @@ def main():
 
         if golden_cross_stocks:
             st.success(f"Found {len(golden_cross_stocks)} stocks with a golden cross in the past 30 days")
-            create_summary_table(golden_cross_stocks)
 
-            # Add visualization of golden crosses
-            st.subheader("Golden Cross Visualizations")
-            st.write("The charts below show the 50-day and 200-day moving averages. A golden cross occurs when the 50-day MA (blue) crosses above the 200-day MA (red).")
+            # Create a table with stock information - using markdown to avoid st.table's non-interactive nature
+            st.markdown("### Golden Cross Stocks")
 
-            # For each stock with a golden cross, create a chart
+            # Create a DataFrame for display with clickable symbols
+            golden_cross_data = []
+            for symbol, data in golden_cross_stocks.items():
+                # Format daily change with color
+                daily_change = data['percentage_change']
+                change_color = "green" if daily_change >= 0 else "red"
+                change_symbol = "+" if daily_change >= 0 else ""
+                formatted_change = f'<span style="color: {change_color};">{change_symbol}{daily_change:.2f}%</span>'
+
+                golden_cross_data.append({
+                    "Symbol": f'<a href="#" onclick="parent.postMessage({{cmd: \'streamlit:setComponentValue\', componentValue: \'{symbol}\', componentKey: \'stock_click\'}}, \'*\'); return false;" style="text-decoration: none; color: #1E88E5; font-weight: bold;">{symbol}</a>',
+                    "Company": STOCKS[symbol],
+                    "Current Price": f"${data['current_price']:.2f}",
+                    "Daily Change": formatted_change,
+                    "Golden Cross": '<span style="color: green; font-weight: bold;">✓</span>'
+                })
+
+            golden_cross_df = pd.DataFrame(golden_cross_data)
+
+            # Display the table with clickable symbols
+            st.markdown(golden_cross_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+            # Display charts for all golden cross stocks
+            st.markdown("### Golden Cross Charts")
+
+            # Show charts for each stock with golden cross
             for symbol, stock_data in golden_cross_stocks.items():
+                st.subheader(f"📊 {symbol} - {STOCKS[symbol]}")
+
                 # Fetch historical data for the past 250 days
                 ticker = yf.Ticker(symbol)
                 hist = ticker.history(period="250d")
 
-                # Skip if we don't have enough data
-                if hist.empty or len(hist) < 200:
-                    continue
-
-                # Only proceed if we have valid data
                 if not hist.empty and len(hist) >= 200:
                     # Calculate moving averages
                     hist['MA50'] = hist['Close'].rolling(window=50).mean()
                     hist['MA200'] = hist['Close'].rolling(window=200).mean()
-
-                    # Create a chart
-                    st.subheader(f"{symbol} - {STOCKS[symbol]}")
 
                     # Create a DataFrame for the chart
                     chart_data = pd.DataFrame({
@@ -534,6 +637,14 @@ def main():
                         crossover_date = hist.index[latest_crossover].strftime('%Y-%m-%d')
                         crossover_price = hist['Close'].iloc[latest_crossover]
                         st.caption(f"⭐ Golden Cross occurred on {crossover_date} at price ${crossover_price:.2f}")
+
+                st.markdown("---")  # Add a separator between charts
+
+            # Add explanation
+            st.markdown("### About Golden Cross")
+            st.write("A golden cross occurs when the 50-day moving average crosses above the 200-day moving average. "
+                     "This is often considered a bullish signal by technical analysts.")
+            st.write("The charts above show stocks that have experienced a golden cross in the past 30 days.")
         else:
             st.warning("No stocks with a golden cross in the past 30 days were found")
 
