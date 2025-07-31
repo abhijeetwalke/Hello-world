@@ -869,22 +869,71 @@ def main():
         st.subheader("Volume Analysis")
         st.write("Compare trading volume with average volume over time for each stock.")
 
-        # Create a dropdown to select a stock
-        selected_stock = st.selectbox(
-            "Select a stock to analyze volume:",
-            options=list(STOCKS.keys()),
-            format_func=lambda x: f"{x} - {STOCKS[x]}"
-        )
+        # Define a list of important stocks to show volume charts for
+        # Start with market indices and ETFs, then add major tech stocks
+        important_stocks = ["SPY", "^VIX", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD"]
 
-        # Fetch historical data for the selected stock
-        with st.spinner(f"Fetching volume data for {selected_stock}..."):
-            ticker = yf.Ticker(selected_stock)
-            hist = ticker.history(period="2y")  # Get 2 years of data
+        # Display a message about the stocks being shown
+        st.info(f"Showing volume analysis for {len(important_stocks)} key stocks. Scroll down to view all charts.")
+
+        # Create a table with stock information
+        st.markdown("### Volume Analysis Stocks")
+
+        # Create a DataFrame for display with clickable symbols
+        volume_analysis_data = []
+        for symbol in important_stocks:
+            if symbol in all_stock_data and all_stock_data[symbol] is not None:
+                data = all_stock_data[symbol]
+                # Format daily change with color
+                daily_change = data['percentage_change']
+                change_color = "green" if daily_change >= 0 else "red"
+                change_symbol = "+" if daily_change >= 0 else ""
+                formatted_change = f'<span style="color: {change_color};">{change_symbol}{daily_change:.2f}%</span>'
+
+                # Calculate volume ratio
+                current_volume = data['volume']
+                avg_volume = data['avg_volume']
+                if avg_volume != "N/A" and avg_volume > 0:
+                    volume_ratio = current_volume / avg_volume
+                    volume_ratio_display = f"{volume_ratio:.2f}x"
+                    # Color code the volume ratio
+                    if volume_ratio > 1.5:
+                        volume_ratio_display = f'<span style="color: red; font-weight: bold;">{volume_ratio:.2f}x</span>'
+                    elif volume_ratio < 0.5:
+                        volume_ratio_display = f'<span style="color: green; font-weight: bold;">{volume_ratio:.2f}x</span>'
+                else:
+                    volume_ratio_display = "N/A"
+
+                volume_analysis_data.append({
+                    "Symbol": f'<a href="#" onclick="parent.postMessage({{cmd: \'streamlit:setComponentValue\', componentValue: \'{symbol}\', componentKey: \'stock_click\'}}, \'*\'); return false;" style="text-decoration: none; color: #1E88E5; font-weight: bold;">{symbol}</a>',
+                    "Company": STOCKS[symbol],
+                    "Current Price": f"${data['current_price']:.2f}",
+                    "Daily Change": formatted_change,
+                    "Volume": format_volume(data['volume']),
+                    "Avg Volume": format_volume(data['avg_volume']),
+                    "Volume/Avg Ratio": volume_ratio_display
+                })
+
+        volume_analysis_df = pd.DataFrame(volume_analysis_data)
+
+        # Display the table with clickable symbols
+        st.markdown(volume_analysis_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+        # Display charts for all important stocks
+        st.markdown("### Volume Charts")
+
+        # Show charts for each important stock
+        for symbol in important_stocks:
+            st.subheader(f"📊 {symbol} - {STOCKS[symbol]}")
+
+            with st.spinner(f"Fetching volume data for {symbol}..."):
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="2y")  # Get 2 years of data
 
             # Try to fetch earnings dates for the past 2 years
             try:
                 # Skip fetching earnings for indices like SPY, VIX, etc.
-                if selected_stock not in ["^VIX", "SPY", "QQQ", "GLD", "SLV", "BTC-USD"]:
+                if symbol not in ["^VIX", "SPY", "QQQ", "GLD", "SLV", "BTC-USD"]:
                     # Get earnings dates from Yahoo Finance API
                     earnings_dates = ticker.get_earnings_dates(limit=20)  # Increased limit to get more historical dates
                     if earnings_dates is not None and not earnings_dates.empty:
@@ -892,7 +941,7 @@ def main():
                         st.success(f"Found {len(earnings_dates)} earnings dates from Yahoo Finance")
 
                         # Special handling for META to ensure we have the July 30, 2024 earnings date
-                        if selected_stock == "META":
+                        if symbol == "META":
                             july_30_2024 = pd.Timestamp('2024-07-30')
                             if not any(abs((date - july_30_2024).days) < 2 for date in earnings_dates.index):
                                 st.info("Adding Meta's July 30, 2024 earnings date")
@@ -905,7 +954,7 @@ def main():
                         earnings_dates = pd.DataFrame()
 
                         # Special handling for META if no earnings dates were found
-                        if selected_stock == "META":
+                        if symbol == "META":
                             st.info("Adding Meta's July 30, 2024 earnings date")
                             earnings_dates = pd.DataFrame(index=[pd.Timestamp('2024-07-30')])
                 else:
@@ -915,7 +964,7 @@ def main():
                 earnings_dates = pd.DataFrame()
 
                 # Special handling for META if there was an error
-                if selected_stock == "META":
+                if symbol == "META":
                     st.info("Adding Meta's July 30, 2024 earnings date after error")
                     earnings_dates = pd.DataFrame(index=[pd.Timestamp('2024-07-30')])
 
@@ -931,7 +980,7 @@ def main():
                 })
 
                 # Display the chart
-                st.subheader(f"Volume Analysis for {selected_stock} - {STOCKS[selected_stock]}")
+                st.subheader(f"Volume Analysis for {symbol} - {STOCKS[symbol]}")
 
                 # Convert volume to millions for better readability
                 volume_data['Volume (M)'] = volume_data['Volume'] / 1e6
@@ -1050,7 +1099,7 @@ def main():
 
                     # Update layout
                     fig.update_layout(
-                        title=f"Volume Analysis for {selected_stock} with Earnings Dates",
+                        title=f"Volume Analysis for {symbol} with Earnings Dates",
                         xaxis_title="Date",
                         legend=dict(
                             orientation="h",
@@ -1122,13 +1171,13 @@ def main():
                 st.markdown("### Volume Analysis")
 
                 if volume_ratio > 1.5:
-                    st.info(f"**High Volume Alert**: {selected_stock} is trading at {volume_ratio:.2f}x its 30-day average volume. "
+                    st.info(f"**High Volume Alert**: {symbol} is trading at {volume_ratio:.2f}x its 30-day average volume. "
                            "Unusually high volume may indicate significant market interest or news affecting the stock.")
                 elif volume_ratio < 0.5:
-                    st.info(f"**Low Volume Alert**: {selected_stock} is trading at only {volume_ratio:.2f}x its 30-day average volume. "
+                    st.info(f"**Low Volume Alert**: {symbol} is trading at only {volume_ratio:.2f}x its 30-day average volume. "
                            "Low volume may indicate reduced market interest or a quiet trading period.")
                 else:
-                    st.info(f"{selected_stock} is trading at normal volume levels relative to its 30-day average.")
+                    st.info(f"{symbol} is trading at normal volume levels relative to its 30-day average.")
 
                 # Show volume trend over time
                 st.subheader("Volume Trend Analysis")
@@ -1147,7 +1196,7 @@ def main():
                     st.write(f"Weekly average volume has {week_change_text} compared to the previous week.")
 
             else:
-                st.error(f"Could not fetch volume data for {selected_stock}")
+                st.error(f"Could not fetch volume data for {symbol}")
 
     # Auto-refresh functionality
     if auto_refresh:
