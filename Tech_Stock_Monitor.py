@@ -62,14 +62,28 @@ def fetch_stock_data(symbol):
     Returns a dictionary with key metrics or None if error occurs
     """
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
+        # Handle special symbols that might need different formatting
+        ticker_symbol = symbol
 
-        # Get current info
+        # Create ticker object with error handling
+        ticker = yf.Ticker(ticker_symbol)
+
+        # Try to get info with additional error handling
+        try:
+            info = ticker.info
+        except Exception as info_error:
+            st.warning(f"Could not fetch info for {symbol}: {str(info_error)}")
+            info = {}  # Use empty dict as fallback
+
         # Get historical data for the last 2 days to calculate daily change
-        hist_recent = ticker.history(period="2d", interval="1d")
+        try:
+            hist_recent = ticker.history(period="2d", interval="1d")
+        except Exception as hist_error:
+            st.warning(f"Could not fetch recent history for {symbol}: {str(hist_error)}")
+            return None
 
         if hist_recent.empty or len(hist_recent) < 1:
+            st.warning(f"No recent data available for {symbol}. Skipping...")
             return None
 
         # Get the most recent data
@@ -140,6 +154,33 @@ def fetch_stock_data(symbol):
         peg_ratio = info.get("pegRatio", info.get("fiveYearAvgDividendYield", "N/A"))
         pb_ratio = info.get("priceToBook", "N/A")
         short_percent_float = info.get("shortPercentOfFloat", "N/A")  # <-- Added
+        avg_volume = info.get("averageVolume", "N/A")  # Get average volume
+
+        # Get earnings date
+        try:
+            # Try to get earnings date from info
+            earnings_date_info = info.get('earningsDate')
+            if earnings_date_info and isinstance(earnings_date_info, list) and len(earnings_date_info) > 0:
+                timestamp = earnings_date_info[0]
+                earnings_date = datetime.fromtimestamp(timestamp)
+            else:
+                # Try alternative method
+                try:
+                    calendar_info = ticker.calendar
+                    if calendar_info is not None and not calendar_info.empty:
+                        earnings_date = calendar_info.iloc[0, 0]
+                        if isinstance(earnings_date, pd.Timestamp):
+                            pass  # Already in the right format
+                        elif isinstance(earnings_date, (int, float)):
+                            earnings_date = datetime.fromtimestamp(earnings_date)
+                        else:
+                            earnings_date = None
+                    else:
+                        earnings_date = None
+                except (AttributeError, IndexError, ValueError):
+                    earnings_date = None
+        except Exception:
+            earnings_date = None
 
         # Debug info - print what we're getting from Yahoo Finance
         # print(f"Debug for {symbol}: EPS={eps}, PEG={peg_ratio}")
@@ -157,6 +198,7 @@ def fetch_stock_data(symbol):
             "high_price": current_data["High"],
             "low_price": current_data["Low"],
             "volume": current_data["Volume"],
+            "avg_volume": avg_volume,  # Add average volume
             "daily_change": daily_change,
             "percentage_change": percentage_change,
             "market_cap": info.get("marketCap", "N/A"),
@@ -167,13 +209,22 @@ def fetch_stock_data(symbol):
             "golden_cross_days_ago": golden_cross_days_ago,  # Days since Golden Cross
             "death_cross": death_cross,    # Death Cross indicator
             "death_cross_days_ago": death_cross_days_ago,  # Days since Death Cross
+            "earnings_date": earnings_date,  # Earnings date
             "timestamp": datetime.now(),
         }
 
         return stock_data
 
     except Exception as e:
-        st.error(f"Error fetching data for {symbol}: {str(e)}")
+        error_msg = str(e)
+        if "404" in error_msg:
+            st.warning(f"Symbol {symbol} not found (HTTP 404). This symbol may be delisted or invalid. Try using a different ticker format.")
+        elif "429" in error_msg:
+            st.warning(f"Rate limit exceeded for {symbol} (HTTP 429). Too many requests to Yahoo Finance API. Try again later.")
+        elif "401" in error_msg:
+            st.warning(f"Unauthorized access for {symbol} (HTTP 401). API authentication issue.")
+        else:
+            st.error(f"Error fetching data for {symbol}: {error_msg}")
         return None
 
 
@@ -235,73 +286,32 @@ def display_stock_card(stock_data, company_name):
             st.metric("Market Cap", format_currency(stock_data["market_cap"]))
 
         with col3:
-            st.metric("Open", f"${stock_data['open_price']:.2f}")
-            st.metric("High", f"${stock_data['high_price']:.2f}")
+            # Get the MA values
+            ma_50d_display = "N/A"
+            if stock_data["ma_50d"] is not None:
+                ma_50d_display = f"${stock_data['ma_50d']:.2f}"
+
+            ma_200d_display = "N/A"
+            if stock_data["ma_200d"] is not None:
+                ma_200d_display = f"${stock_data['ma_200d']:.2f}"
+
+            st.metric("50-Day MA", ma_50d_display)
+            st.metric("200-Day MA", ma_200d_display)
 
         with col4:
-            st.metric("Low", f"${stock_data['low_price']:.2f}")
+            # Display Golden Cross indicator
+            golden_cross = stock_data.get("golden_cross", False)
+            golden_cross_days_ago = stock_data.get("golden_cross_days_ago")
 
-            # Display 50-day moving average if available
-            ma_50d_value = "N/A"
-            if stock_data["ma_50d"] is not None:
-                ma_50d_value = f"${stock_data['ma_50d']:.2f}"
-            st.metric("50-Day MA", ma_50d_value)
-
-            # Display 200-day moving average if available
-            ma_200d_value = "N/A"
-            if stock_data["ma_200d"] is not None:
-                ma_200d_value = f"${stock_data['ma_200d']:.2f}"
-            st.metric("200-Day MA", ma_200d_value)
-
-    st.divider()
+            if golden_cross and golden_cross_days_ago is not None:
+                st.success(f"Golden Cross: {golden_cross_days_ago} days ago")
+            else:
+                st.info("No recent Golden Cross")
 
 
 def create_summary_table(all_stock_data):
-    """Create a summary table of all tech stocks"""
-    summary_data = []
-    for symbol, stock_data in all_stock_data.items():
-        if stock_data is not None:
-            # Format P/E ratio
-            pe_ratio_value = "N/A"
-            if stock_data["pe_ratio"] != "N/A" and stock_data["pe_ratio"] is not None:
-                pe_ratio_value = f"{stock_data['pe_ratio']:.2f}"
-
-            # Format 50-day moving average
-            ma_50d_value = "N/A"
-            if stock_data["ma_50d"] is not None:
-                ma_50d_value = f"${stock_data['ma_50d']:.2f}"
-
-            # Format 200-day moving average
-            ma_200d_value = "N/A"
-            if stock_data["ma_200d"] is not None:
-                ma_200d_value = f"${stock_data['ma_200d']:.2f}"
-
-            # Format percentage change with color
-            percentage_change = stock_data["percentage_change"]
-            is_positive = percentage_change >= 0
-            change_symbol = "+" if is_positive else ""
-
-            short_percent_float_raw = stock_data.get("short_percent_float", "N/A")
-            if short_percent_float_raw == "N/A" or short_percent_float_raw is None:
-                short_percent_float_display = "N/A"
-            else:
-                short_percent_float_display = f"{short_percent_float_raw*100:.2f}%"
-
-            summary_data.append(
-                {
-                    "Symbol": symbol,
-                    "Company": STOCKS[symbol],
-                    "Current Price": f"${stock_data['current_price']:.2f}",
-                    "P/E (TTM)": pe_ratio_value,
-                    "Daily Change": f"{stock_data['daily_change']:+.2f} ({change_symbol}{percentage_change:.2f}%)",
-                    "200-Day MA": ma_200d_value,  # Swapped position with 50-Day MA
-                    "50-Day MA": ma_50d_value,  # Swapped position with 200-Day MA
-                    "Volume": format_volume(stock_data["volume"]),
-                    "Market Cap": format_currency(stock_data["market_cap"]),
-                    "Short % Float": short_percent_float_display,  # <-- Added
-                }
-            )
-    if summary_data:
+    """Create a summary table of all stocks"""
+    if all_stock_data:
         raw_data = []
         for symbol, stock_data in all_stock_data.items():
             if stock_data is not None:
@@ -357,6 +367,13 @@ def create_summary_table(all_stock_data):
                     death_cross_display = f"✓ ({death_cross_days_ago}d ago)"
                 else:
                     death_cross_display = "✗"
+
+                # Format earnings date
+                earnings_date = stock_data.get("earnings_date")
+                if earnings_date is not None:
+                    earnings_date_display = earnings_date.strftime("%Y-%m-%d")
+                else:
+                    earnings_date_display = "N/A"
 
                 # Format EPS, PEG ratio, and P/B ratio
                 eps_raw = stock_data["eps"]
@@ -421,6 +438,13 @@ def create_summary_table(all_stock_data):
                             else float("nan")
                         ),
                         "Volume Display": format_volume(stock_data["volume"]),
+                        # Convert average volume to millions for sorting and display
+                        "Avg Volume": (
+                            stock_data["avg_volume"] / 1e6
+                            if stock_data["avg_volume"] != "N/A"
+                            else float("nan")
+                        ),
+                        "Avg Volume Display": format_volume(stock_data["avg_volume"]),
                         # Convert market cap to billions for sorting and display
                         "Market Cap": (
                             stock_data["market_cap"] / 1e9
@@ -428,6 +452,9 @@ def create_summary_table(all_stock_data):
                             else float("nan")
                         ),
                         "Market Cap Display": format_currency(stock_data["market_cap"]),
+                        # Earnings date
+                        "Earnings Date": earnings_date,  # Raw date for sorting
+                        "Earnings Date Display": earnings_date_display,  # Formatted date for display
                     }
                 )
 
@@ -459,24 +486,26 @@ def create_summary_table(all_stock_data):
         df_raw["Golden Cross Colored"] = df_raw.apply(format_golden_cross, axis=1)
         df_raw["Death Cross Colored"] = df_raw.apply(format_death_cross, axis=1)
 
-        # Create a display DataFrame with clickable symbols and other columns
+                # Create a display DataFrame with clickable symbols and other columns
         display_df = pd.DataFrame(
             {
                 "Symbol": [f'<a href="#" onclick="parent.postMessage({{cmd: \'streamlit:setComponentValue\', componentValue: \'{symbol}\', componentKey: \'stock_click\'}}, \'*\'); return false;" style="text-decoration: none; color: #1E88E5; font-weight: bold;">{symbol}</a>' for symbol in df_raw["Symbol"]],
                 "Company": df_raw["Company"],
                 "Current Price": df_raw["Current Price Display"],
-                "Daily Change": df_raw["Daily Change Display"],
                 "P/E (TTM)": df_raw["P/E (TTM) Display"],
                 "EPS (TTM)": df_raw["EPS (TTM) Display"],
                 "PEG Ratio": df_raw["PEG Ratio Display"],
                 "P/B Ratio": df_raw["P/B Ratio Display"],
-                "Short % Float": df_raw["Short % Float Display"],
-                "Golden Cross": df_raw["Golden Cross Colored"],  # <-- Use colored HTML
-                "Death Cross": df_raw["Death Cross Colored"],    # <-- Use colored HTML
+                "Daily Change": df_raw["Daily Change Display"],
+                "Golden Cross": df_raw["Golden Cross Colored"],
+                "Death Cross": df_raw["Death Cross Colored"],
                 "200-Day MA": df_raw["200-Day MA Display"],
                 "50-Day MA": df_raw["50-Day MA Display"],
                 "Volume": df_raw["Volume Display"],
+                "Avg Volume": df_raw["Avg Volume Display"],
                 "Market Cap": df_raw["Market Cap Display"],
+                "Short % Float": df_raw["Short % Float Display"],
+                "Earnings Date": df_raw["Earnings Date Display"],
             }
         )
 
@@ -488,10 +517,7 @@ def create_summary_table(all_stock_data):
 
 def main():
     """Main application function"""
-    # Initialize session state for navigation
-    if 'viewing_stock' not in st.session_state:
-        st.session_state.viewing_stock = None
-
+    # Initialize session state for selected tab
     if 'selected_tab' not in st.session_state:
         st.session_state.selected_tab = 0
 
@@ -530,95 +556,14 @@ def main():
     last_update.text(f"Last updated: {current_time}")
 
     # Create tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Summary Table", "📋 Detailed Cards", "🔍 Golden Cross", "⚠️ Death Cross"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Summary Table", "🔍 Golden Cross", "⚠️ Death Cross", "📈 Volume Analysis"])
 
-    # If a stock is selected for viewing, show its details
-    if st.session_state.viewing_stock:
-        selected_symbol = st.session_state.viewing_stock
-        if selected_symbol in all_stock_data and all_stock_data[selected_symbol] is not None:
-            st.subheader(f"Detailed View: {selected_symbol} - {STOCKS[selected_symbol]}")
-            display_stock_card(all_stock_data[selected_symbol], STOCKS[selected_symbol])
-
-            # Get historical data for chart
-            ticker = yf.Ticker(selected_symbol)
-            hist = ticker.history(period="250d")
-
-            if not hist.empty and len(hist) >= 50:
-                # Calculate moving averages
-                hist['MA50'] = hist['Close'].rolling(window=50).mean()
-                hist['MA200'] = hist['Close'].rolling(window=200).mean()
-
-                # Create chart
-                st.subheader(f"Price History and Moving Averages")
-                chart_data = pd.DataFrame({
-                    'Date': hist.index,
-                    'Price': hist['Close'],
-                    '50-Day MA': hist['MA50'],
-                    '200-Day MA': hist['MA200']
-                })
-
-                st.line_chart(chart_data.set_index('Date')[['Price', '50-Day MA', '200-Day MA']])
-
-            # Add a button to go back to the main view
-            if st.button("← Back to Summary"):
-                st.session_state.viewing_stock = None
-                st.rerun()
-
-            # Early return to not show the tabs
-            return
-
-    # Add a component to capture clicks on stock symbols
-    stock_click = st.text_input("stock_click", "", key="stock_click", label_visibility="collapsed")
-    if stock_click and stock_click in STOCKS:
-        st.session_state.viewing_stock = stock_click
-        st.rerun()
-
-    # Add JavaScript to handle clicks on stock symbols
-    st.markdown("""
-    <script>
-    // Function to handle clicks on stock symbols
-    document.addEventListener('DOMContentLoaded', function() {
-        // Add click event listeners to all stock symbol links
-        document.querySelectorAll('a.stock-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                const symbol = this.getAttribute('data-symbol');
-                window.parent.postMessage({
-                    cmd: 'streamlit:setComponentValue',
-                    componentValue: symbol,
-                    componentKey: 'stock_click'
-                }, '*');
-            });
-        });
-    });
-    </script>
-    """, unsafe_allow_html=True)
 
     with tab1:
         st.subheader("Tech Stocks Summary")
         create_summary_table(all_stock_data)
 
     with tab2:
-        st.subheader("Detailed Stock Information")
-
-        # Add a selectbox to jump to a specific stock
-        selected_stock = st.selectbox(
-            "Jump to stock:",
-            options=list(STOCKS.keys()),
-            format_func=lambda x: f"{x} - {STOCKS[x]}"
-        )
-
-        if selected_stock:
-            st.markdown(f"### {selected_stock} - {STOCKS[selected_stock]}")
-            display_stock_card(all_stock_data[selected_stock], STOCKS[selected_stock])
-            st.markdown("---")
-
-        # Display all other stocks
-        for symbol, company_name in STOCKS.items():
-            if symbol != selected_stock:  # Skip the already displayed selected stock
-                display_stock_card(all_stock_data[symbol], company_name)
-
-    with tab3:
         st.subheader("Golden Cross Stocks")
         # Filter stocks with golden cross and remove any None values
         golden_cross_stocks = {symbol: data for symbol, data in all_stock_data.items()
@@ -705,7 +650,7 @@ def main():
         else:
             st.warning("No stocks with a golden cross in the past 30 days were found")
 
-    with tab4:
+    with tab3:
         st.subheader("Death Cross Stocks")
         # Filter stocks with death cross and remove any None values
         death_cross_stocks = {symbol: data for symbol, data in all_stock_data.items()
@@ -791,6 +736,111 @@ def main():
             st.write("The charts above show stocks that have experienced a death cross in the past 30 days.")
         else:
             st.info("No stocks with a death cross in the past 30 days were found")
+
+    with tab4:
+        st.subheader("Volume Analysis")
+        st.write("Compare trading volume with average volume over time for each stock.")
+
+        # Create a dropdown to select a stock
+        selected_stock = st.selectbox(
+            "Select a stock to analyze volume:",
+            options=list(STOCKS.keys()),
+            format_func=lambda x: f"{x} - {STOCKS[x]}"
+        )
+
+        # Fetch historical data for the selected stock
+        with st.spinner(f"Fetching volume data for {selected_stock}..."):
+            ticker = yf.Ticker(selected_stock)
+            hist = ticker.history(period="90d")  # Get 90 days of data
+
+            if not hist.empty:
+                # Calculate the average volume (30-day moving average)
+                hist['Avg_Volume'] = hist['Volume'].rolling(window=30).mean()
+
+                # Create a DataFrame for the chart
+                volume_data = pd.DataFrame({
+                    'Date': hist.index,
+                    'Volume': hist['Volume'],
+                    'Avg Volume (30-day MA)': hist['Avg_Volume']
+                })
+
+                # Display the chart
+                st.subheader(f"Volume Analysis for {selected_stock} - {STOCKS[selected_stock]}")
+
+                # Convert volume to millions for better readability
+                volume_data['Volume (M)'] = volume_data['Volume'] / 1e6
+                volume_data['Avg Volume (M)'] = volume_data['Avg Volume (30-day MA)'] / 1e6
+
+                # Create the chart
+                st.line_chart(
+                    volume_data.set_index('Date')[['Volume (M)', 'Avg Volume (M)']]
+                )
+
+                # Calculate and display volume metrics
+                current_volume = hist['Volume'].iloc[-1]
+                avg_volume = hist['Avg_Volume'].iloc[-1] if not pd.isna(hist['Avg_Volume'].iloc[-1]) else 0
+                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "Latest Volume",
+                        format_volume(current_volume)
+                    )
+
+                with col2:
+                    st.metric(
+                        "30-Day Avg Volume",
+                        format_volume(avg_volume)
+                    )
+
+                with col3:
+                    # Format the ratio with color based on whether volume is above or below average
+                    ratio_delta = f"{volume_ratio:.2f}x" if volume_ratio > 0 else "N/A"
+                    ratio_color = "normal"
+                    if volume_ratio > 1.5:
+                        ratio_color = "off"  # High volume (red in Streamlit)
+                    elif volume_ratio < 0.5:
+                        ratio_color = "inverse"  # Low volume (green in Streamlit)
+
+                    st.metric(
+                        "Volume/Avg Ratio",
+                        ratio_delta,
+                        delta_color=ratio_color
+                    )
+
+                # Add some analysis text
+                st.markdown("### Volume Analysis")
+
+                if volume_ratio > 1.5:
+                    st.info(f"**High Volume Alert**: {selected_stock} is trading at {volume_ratio:.2f}x its 30-day average volume. "
+                           "Unusually high volume may indicate significant market interest or news affecting the stock.")
+                elif volume_ratio < 0.5:
+                    st.info(f"**Low Volume Alert**: {selected_stock} is trading at only {volume_ratio:.2f}x its 30-day average volume. "
+                           "Low volume may indicate reduced market interest or a quiet trading period.")
+                else:
+                    st.info(f"{selected_stock} is trading at normal volume levels relative to its 30-day average.")
+
+                # Show volume trend over time
+                st.subheader("Volume Trend Analysis")
+
+                # Calculate weekly average volumes
+                weekly_vol = hist['Volume'].resample('W').mean()
+
+                # Compare recent weeks
+                if len(weekly_vol) >= 4:
+                    recent_week = weekly_vol.iloc[-1]
+                    previous_week = weekly_vol.iloc[-2]
+                    week_change = ((recent_week - previous_week) / previous_week) * 100 if previous_week > 0 else 0
+
+                    week_change_text = f"increased by {week_change:.1f}%" if week_change > 0 else f"decreased by {abs(week_change):.1f}%"
+
+                    st.write(f"Weekly average volume has {week_change_text} compared to the previous week.")
+
+                    # No bar chart as requested by user
+            else:
+                st.error(f"Could not fetch volume data for {selected_stock}")
 
     # Auto-refresh functionality
     if auto_refresh:
